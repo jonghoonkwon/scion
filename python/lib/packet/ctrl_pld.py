@@ -20,7 +20,6 @@ import struct
 
 # External
 import capnp
-
 # SCION
 import proto.ctrl_pld_capnp as P
 from lib.drkey.drkey_mgmt import DRKeyMgmt

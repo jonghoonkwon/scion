@@ -18,6 +18,7 @@
 # Stdlib
 import logging
 import threading
+import time
 from collections import defaultdict
 from abc import ABCMeta, abstractmethod
 from threading import Lock
@@ -27,6 +28,7 @@ from external.expiring_dict import ExpiringDict
 from prometheus_client import Counter, Gauge
 
 # SCION
+from lib.crypto.asymcrypto import get_sig_key
 from lib.crypto.hash_tree import ConnectedHashTree
 from lib.crypto.symcrypto import crypto_hash
 from lib.defines import (
@@ -35,6 +37,7 @@ from lib.defines import (
     PATH_SERVICE,
 )
 from lib.errors import SCIONBaseError
+from lib.hpcfg_store import HPCfgStore
 from lib.log import add_formatter, Rfc3339Formatter
 from lib.path_seg_meta import PathSegMeta
 from lib.packet.ctrl_pld import CtrlPayload
@@ -49,6 +52,7 @@ from lib.rev_cache import RevCache
 from lib.thread import thread_safety_net
 from lib.types import (
     CertMgmtType,
+    HPMgmtType as HPMT,
     PathMgmtType as PMT,
     PathSegmentType as PST,
     PayloadClass,
@@ -127,6 +131,14 @@ class PathServer(SCIONElement, metaclass=ABCMeta):
                 CertMgmtType.TRC_REPLY: self.process_trc_reply,
                 CertMgmtType.TRC_REQ: self.process_trc_request,
             },
+            PayloadClass.HPATH: {
+                HPMT.CFG_REQ: self.handle_hpcfg_request,
+                HPMT.CFG_REPLY: self.handle_hpcfg_record,
+                HPMT.CFG_REG: self.handle_hpcfg_record,
+                HPMT.SEG_REQ: self.handle_hpath_segment_request,
+                HPMT.SEG_REPLY: self.handle_hpath_segment_record,
+                HPMT.SEG_REG: self.handle_hpath_segment_record,
+            }
         }
         self.SCMP_PLD_CLASS_MAP = {
             SCMPClass.PATH: {
@@ -145,6 +157,8 @@ class PathServer(SCIONElement, metaclass=ABCMeta):
         self.rev_cache = ZkSharedCache(self.zk, self.ZK_REV_CACHE_PATH,
                                        self._rev_entries_handler)
         self._init_request_logger()
+        self.hpcfg_store = HPCfgStore(self.hps_policy)
+        self.signing_key = get_sig_key(self.conf_dir)
 
     def worker(self):
         """
@@ -152,6 +166,7 @@ class PathServer(SCIONElement, metaclass=ABCMeta):
         handling master election for core servers.
         """
         worker_cycle = 1.0
+        last_hpcfg_propagation = 0
         start = SCIONTime.get_time()
         while self.run_flag.is_set():
             sleep_interval(start, worker_cycle, "cPS.worker cycle",
@@ -176,8 +191,20 @@ class PathServer(SCIONElement, metaclass=ABCMeta):
             self._handle_pending_requests()
             self._update_metrics()
 
+            now = time.time()
+            if (now - last_hpcfg_propagation >= self.hps_policy.propagation_time and
+               not self.topology.is_core_as):
+                self.handle_hpcfg_propagation()
+                last_hpcfg_propagation = now
+
     def _update_master(self):
         pass
+
+    def _get_my_trc(self):
+        return self.trust_store.get_trc(self.addr.isd_as[0])
+
+    def _get_my_cert(self):
+        return self.trust_store.get_cert(self.addr.isd_as)
 
     def _rev_entries_handler(self, raw_entries):
         for raw in raw_entries:
@@ -207,6 +234,10 @@ class PathServer(SCIONElement, metaclass=ABCMeta):
 
     @abstractmethod
     def _handle_core_segment_record(self, pcb, **kwargs):
+        raise NotImplementedError
+
+    @abstractmethod
+    def _handle_hidden_segment_record(self, pcb, **kwargs):
         raise NotImplementedError
 
     def _add_segment(self, pcb, seg_db, name, reverse=False):
@@ -429,6 +460,7 @@ class PathServer(SCIONElement, metaclass=ABCMeta):
             PST.UP: self._handle_up_segment_record,
             PST.CORE: self._handle_core_segment_record,
             PST.DOWN: self._handle_down_segment_record,
+            PST.HIDDEN: self._handle_hidden_segment_record,
         }
         handle_map[type_](seg, **kwargs)
 
@@ -452,6 +484,26 @@ class PathServer(SCIONElement, metaclass=ABCMeta):
 
     def _dispatch_params(self, pld, meta):
         return {}
+
+    @abstractmethod
+    def handle_hpcfg_request(self, cpld, meta):
+        raise NotImplementedError
+
+    @abstractmethod
+    def handle_hpcfg_record(self, cpld, meta):
+        raise NotImplementedError
+
+    @abstractmethod
+    def handle_hpath_segment_request(self, cpld, meta):
+        raise NotImplementedError
+
+    @abstractmethod
+    def handle_hpath_segment_record(self, cpld, meta):
+        raise NotImplementedError
+
+    @abstractmethod
+    def handle_hpcfg_propagation(self):
+        raise NotImplementedError
 
     def _propagate_and_sync(self):
         self._share_via_zk()

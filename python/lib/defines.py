@@ -54,6 +54,8 @@ IFIDS_FILE = "ifids.yml"
 AS_LIST_FILE = "as_list.yml"
 #: Prometheus config
 PROM_FILE = "prometheus.yml"
+#: Hidden path config
+HIDDEN_PATH_CONF_FILE = "hidden_path.conf"
 
 #: Buffer size for receiving packets
 SCION_BUFLEN = 65535
@@ -83,6 +85,7 @@ SCIOND_API_DEFAULT_SOCK = "default.sock"
 BEACON_SERVICE = "bs"
 CERTIFICATE_SERVICE = "cs"
 DNS_SERVICE = "ds"
+HIDDEN_PATH_SERVICE = "hps"
 PATH_SERVICE = "ps"
 ROUTER_SERVICE = "br"
 SIBRA_SERVICE = "sb"
@@ -91,6 +94,7 @@ SERVICE_TYPES = (
     BEACON_SERVICE,
     CERTIFICATE_SERVICE,
     DNS_SERVICE,
+    HIDDEN_PATH_SERVICE,
     PATH_SERVICE,
     ROUTER_SERVICE,
     SIBRA_SERVICE,

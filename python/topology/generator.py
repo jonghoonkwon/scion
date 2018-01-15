@@ -20,6 +20,7 @@
 import argparse
 import base64
 import configparser
+import copy
 import getpass
 import json
 import logging
@@ -27,6 +28,7 @@ import math
 import os
 import random
 import sys
+import uuid
 from collections import defaultdict
 from io import StringIO
 from string import Template
@@ -67,6 +69,7 @@ from lib.defines import (
     DEFAULT_MTU,
     DEFAULT_SEGMENT_TTL,
     GEN_PATH,
+    HIDDEN_PATH_CONF_FILE,
     IFIDS_FILE,
     NETWORKS_FILE,
     PATH_POLICY_FILE,
@@ -117,8 +120,8 @@ DEFAULT_ROUTER = "go"
 
 SCION_SERVICE_NAMES = (
     "BeaconService",
-    "CertificateService",
     "BorderRouters",
+    "CertificateService",
     "PathService",
     "SibraService",
 )
@@ -137,7 +140,7 @@ class ConfigGenerator(object):
                  path_policy_file=DEFAULT_PATH_POLICY_FILE,
                  zk_config_file=DEFAULT_ZK_CONFIG, network=None,
                  use_mininet=False, router="py", bind_addr=GENERATE_BIND_ADDRESS,
-                 pseg_ttl=DEFAULT_SEGMENT_TTL):
+                 pseg_ttl=DEFAULT_SEGMENT_TTL, hidden_path=False):
         """
         Initialize an instance of the class ConfigGenerator.
 
@@ -160,6 +163,7 @@ class ConfigGenerator(object):
         self.router = router
         self.gen_bind_addr = bind_addr
         self.pseg_ttl = pseg_ttl
+        self.hidden_path = hidden_path
         self._read_defaults(network)
 
     def _read_defaults(self, network):
@@ -190,10 +194,11 @@ class ConfigGenerator(object):
         """
         ca_private_key_files, ca_cert_files, ca_certs = self._generate_cas()
         cert_files, trc_files = self._generate_certs_trcs(ca_certs)
-        topo_dicts, zookeepers, networks, prv_networks = self._generate_topology()
+        topo_dicts, zookeepers, networks, prv_networks, as_list = self._generate_topology()
         self._generate_supervisor(topo_dicts, zookeepers)
         self._generate_zk_conf(zookeepers)
         self._generate_prom_conf(topo_dicts)
+        self._generate_hps_conf(topo_dicts, as_list)
         self._write_ca_files(topo_dicts, ca_private_key_files)
         self._write_ca_files(topo_dicts, ca_cert_files)
         self._write_trust_files(topo_dicts, cert_files)
@@ -214,7 +219,7 @@ class ConfigGenerator(object):
     def _generate_topology(self):
         topo_gen = TopoGenerator(
             self.topo_config, self.out_dir, self.subnet_gen, self.prvnet_gen, self.zk_config,
-            self.default_mtu, self.gen_bind_addr)
+            self.default_mtu, self.gen_bind_addr, self.hidden_path)
         return topo_gen.generate()
 
     def _generate_supervisor(self, topo_dicts, zookeepers):
@@ -230,6 +235,11 @@ class ConfigGenerator(object):
     def _generate_prom_conf(self, topo_dicts):
         prom_gen = PrometheusGenerator(self.out_dir, topo_dicts)
         prom_gen.generate()
+
+    def _generate_hps_conf(self, topo_dicts, as_list):
+        if self.hidden_path:
+            hps_gen = HiddenPathServiceGenerator(self.out_dir, topo_dicts, as_list)
+            hps_gen.generate()
 
     def _write_ca_files(self, topo_dicts, ca_files):
         isds = set()
@@ -501,7 +511,7 @@ class CA_Generator(object):
 
 class TopoGenerator(object):
     def __init__(self, topo_config, out_dir, subnet_gen, prvnet_gen, zk_config,
-                 default_mtu, gen_bind_addr):
+                 default_mtu, gen_bind_addr, hidden_path):
         self.topo_config = topo_config
         self.out_dir = out_dir
         self.subnet_gen = subnet_gen
@@ -509,6 +519,7 @@ class TopoGenerator(object):
         self.zk_config = zk_config
         self.default_mtu = default_mtu
         self.gen_bind_addr = gen_bind_addr
+        self.hidden_path = hidden_path
         self.topo_dicts = {}
         self.hosts = []
         self.zookeepers = defaultdict(dict)
@@ -516,6 +527,7 @@ class TopoGenerator(object):
         self.as_list = defaultdict(list)
         self.links = defaultdict(list)
         self.ifid_map = {}
+        self.leaf_ases = []
 
     def _reg_addr(self, topo_id, elem_id):
         subnet = self.subnet_gen.register(topo_id)
@@ -536,6 +548,7 @@ class TopoGenerator(object):
 
     def generate(self):
         self._read_links()
+        self._init_hps_entries()
         self._iterate(self._generate_as_topo)
         self._iterate(self._generate_as_list)
         networks = self.subnet_gen.alloc_subnets()
@@ -543,7 +556,7 @@ class TopoGenerator(object):
         self._write_as_topos()
         self._write_as_list()
         self._write_ifids()
-        return self.topo_dicts, self.zookeepers, networks, prv_networks
+        return self.topo_dicts, self.zookeepers, networks, prv_networks, self.as_list
 
     def _read_links(self):
         br_ids = defaultdict(int)
@@ -573,6 +586,33 @@ class TopoGenerator(object):
             self.ifid_map[str(a)][a_desc] = b_desc
             self.ifid_map.setdefault(str(b), {})
             self.ifid_map[str(b)][b_desc] = a_desc
+            if b not in self.leaf_ases:
+                self.leaf_ases.append(b)
+            if a in self.leaf_ases:
+                self.leaf_ases.remove(a)
+
+    def _init_hps_entries(self):
+        if self.hidden_path:
+            client_ases = []
+            for isd_as, as_conf in self.topo_config["ASes"].items():
+                if not as_conf.get('core', False):
+                    client_ases.append(isd_as)
+            provider_as = self._select_isd_as(self.leaf_ases)
+            client_ases.remove(provider_as)
+            num_client_ases = len(client_ases)
+            if num_client_ases > 2:
+                while len(client_ases) > (num_client_ases / 2 + 1):
+                    non_client_as = self._select_isd_as(client_ases)
+                    client_ases.remove(non_client_as)
+            hps_as = self._select_isd_as(client_ases)
+            self.as_list['HiddenPathServer'].append(hps_as)
+            self.as_list['Hidden-AS'].append(provider_as)
+            self.as_list['Client-AS'] = client_ases
+
+    def _select_isd_as(self, ases):
+        copied = copy.copy(ases)
+        random.shuffle(copied)
+        return str(copied[0])
 
     def _generate_as_topo(self, topo_id, as_conf):
         mtu = as_conf.get('mtu', self.default_mtu)
@@ -733,7 +773,10 @@ class PrometheusGenerator(object):
             ele_dict = defaultdict(list)
             for br_id, br_ele in as_topo["BorderRouters"].items():
                 ele_dict["BorderRouters"].append(_prom_addr_br(br_ele))
-            for svc_type in ["BeaconService", "PathService", "CertificateService"]:
+            for svc_type in ["BeaconService", "CertificateService",
+                             "PathService"]:
+                if svc_type not in as_topo:
+                    continue
                 for elem_id, elem in as_topo[svc_type].items():
                     ele_dict[svc_type].append(_prom_addr_infra(elem))
             config_dict[topo_id] = ele_dict
@@ -775,6 +818,108 @@ class PrometheusGenerator(object):
         targets_path = os.path.join(base_path, self.PROM_DIR, self.TARGET_FILES[ele_type])
         target_config = [{'targets': target_addrs}]
         write_file(targets_path, yaml.dump(target_config, default_flow_style=False))
+
+"""
+class HiddenPathServiceGenerator(object):
+    def __init__(self, out_dir, topo_dicts, as_list):
+        self.out_dir = out_dir
+        self.topo_dicts = topo_dicts
+        self.as_list = as_list
+
+    def generate(self):
+        config_dict = self._generate_conf_file()
+        self._write_config_file(config_dict)
+
+    def _generate_conf_file(self):
+        hps_as = self.as_list['HiddenPathServer'][0]
+        provider_as = self.as_list['Hidden-AS'][0]
+        client_as = self.as_list['Client-AS']
+        hidden_ifids = self._read_hidden_ifids(provider_as)
+        config = {}
+        provider_config = []
+
+        for if_id in hidden_ifids:
+            provider_config.append({
+                "Master": True,
+                "IFID": if_id,
+                "PathServer": hps_as,
+                "CfgID": uuid.uuid1().int>>64
+            })
+        config["ETHZ"] = {
+            "HiddenASes": {provider_as: provider_config},
+            "ClientASes": client_as
+        }
+        return config
+
+    def _read_hidden_ifids(self, isd_as):
+        if_ids = []
+        for br_id, br_elem in self.topo_dicts[TopoID(isd_as)]['BorderRouters'].items():
+            for if_id, _ in br_elem['Interfaces'].items():
+                if_ids.append(if_id)
+        return if_ids
+
+    def _write_config_file(self, config_dict):
+        target_ases = self.as_list['Client-AS'].copy()
+        target_ases.append(self.as_list['Hidden-AS'][0])
+
+        contents_json = json.dumps(config_dict, indent=2)
+        for topo_id, topo in self.topo_dicts.items():
+            if str(topo_id) in target_ases:
+                file_path = os.path.join(self.out_dir, topo_id.ISD(),
+                                         topo_id.AS(), HIDDEN_PATH_CONF_FILE)
+                write_file(file_path, contents_json)
+"""
+
+
+class HiddenPathServiceGenerator(object):
+    def __init__(self, out_dir, topo_dicts, as_list):
+        self.out_dir = out_dir
+        self.topo_dicts = topo_dicts
+        self.as_list = as_list
+        self.cfg_id = uuid.uuid1().int >> 64
+
+    def generate(self):
+        client_conf = self._generate_conf_file()
+        writer_conf = self._generate_conf_file(provider=True)
+        self._write_config_file(self.as_list['Client-AS'], client_conf)
+        self._write_config_file(self.as_list['Hidden-AS'][0], writer_conf)
+
+    def _generate_conf_file(self, provider=False):
+        hps_ases = self.as_list['HiddenPathServer']
+        provider_ases = self.as_list['Hidden-AS']
+        client_ases = self.as_list['Client-AS']
+        config = {}
+
+        config["ETHZ"] = {
+            "MasterAS": provider_ases[0],
+            "CfgID": self.cfg_id,
+            "PathServers": hps_ases,
+        }
+        if provider:
+            ifid = {}
+            for provider_as in provider_ases:
+                ifid[provider_as] = self._read_hidden_ifids(provider_as)
+
+            config["ETHZ"]["Version"] = 0
+            config["ETHZ"]["HiddenASes"] = provider_ases
+            config["ETHZ"]["ClientASes"] = client_ases
+            config["ETHZ"]["IFID"] = ifid
+        return config
+
+    def _read_hidden_ifids(self, isd_as):
+        if_ids = []
+        for br_id, br_elem in self.topo_dicts[TopoID(isd_as)]['BorderRouters'].items():
+            for if_id, _ in br_elem['Interfaces'].items():
+                if_ids.append(if_id)
+        return if_ids
+
+    def _write_config_file(self, target_ases, config_dict):
+        contents_json = json.dumps(config_dict, indent=2)
+        for topo_id, topo in self.topo_dicts.items():
+            if str(topo_id) in target_ases:
+                file_path = os.path.join(self.out_dir, topo_id.ISD(),
+                                         topo_id.AS(), HIDDEN_PATH_CONF_FILE)
+                write_file(file_path, contents_json)
 
 
 class SupervisorGenerator(object):
@@ -1311,10 +1456,13 @@ def main():
                         help='Generate bind addresses (E.g. "192.168.0.0/16"')
     parser.add_argument('--pseg-ttl', type=int, default=DEFAULT_SEGMENT_TTL,
                         help='Path segment TTL (in seconds)')
+    parser.add_argument('-H', '--hidden-path',
+                        help='Generate topology with hidden path infrastructure')
     args = parser.parse_args()
     confgen = ConfigGenerator(
         args.output_dir, args.topo_config, args.path_policy, args.zk_config,
-        args.network, args.mininet, args.router, args.bind_addr, args.pseg_ttl)
+        args.network, args.mininet, args.router, args.bind_addr, args.pseg_ttl,
+        args.hidden_path)
     confgen.generate_all()
 
 

@@ -40,6 +40,7 @@ from lib.defines import (
     BEACON_SERVICE,
     CERTIFICATE_SERVICE,
     GEN_CACHE_PATH,
+    HIDDEN_PATH_CONF_FILE,
     PATH_SERVICE,
     SCION_UDP_EH_DATA_PORT,
     SCIOND_API_SOCKDIR,
@@ -56,6 +57,7 @@ from lib.errors import (
     SCIONTCPTimeout,
     SCIONServiceLookupError,
 )
+from lib.hpcfg_store import HPCfgPolicy
 from lib.log import log_exception
 from lib.msg_meta import (
     SCMPMetadata,
@@ -63,6 +65,7 @@ from lib.msg_meta import (
     TCPMetadata,
     UDPMetadata,
 )
+from lib.path_seg_meta import PathSegMeta
 from lib.packet.cert_mgmt import (
     CertMgmt,
     CertChainReply,
@@ -215,6 +218,8 @@ class SCIONElement(object):
             self._init_metrics()
         self._setup_sockets(True)
         lib_sciond.init(os.path.join(SCIOND_API_SOCKDIR, "sd%s.sock" % self.addr.isd_as))
+        hpcfg_dir = os.path.join(os.path.dirname(conf_dir), HIDDEN_PATH_CONF_FILE)
+        self.hps_policy = HPCfgPolicy(self.addr.isd_as, hpcfg_dir)
 
     def _setup_sockets(self, init):
         """
@@ -448,12 +453,20 @@ class SCIONElement(object):
                     continue
             trc_req = TRCRequest.from_values(ISD_AS.from_values(isd, 0), ver, cache_only=True)
             meta = seg_meta.meta or self._get_cs()
-            if not meta:
-                logging.error("Couldn't find a CS to request TRC for PCB %s",
-                              seg_meta.seg.short_id())
+            if isinstance(seg_meta, PathSegMeta):
+                if not meta:
+                    logging.error("Couldn't find a CS to request TRC for PCB %s",
+                                  seg_meta.seg.short_id())
+                    continue
+                logging.info("Requesting %sv%s TRC from %s, for PCB %s",
+                             isd, ver, meta, seg_meta.seg.short_id())
+            elif not meta:
+                logging.error("Couldn't find a CS to request TRC for HPmgt %s",
+                              seg_meta.hmgt.union)
                 continue
-            logging.info("Requesting %sv%s TRC from %s, for PCB %s",
-                         isd, ver, meta, seg_meta.seg.short_id())
+            else:
+                logging.info("Requesting %sv%s TRC from %s, for HPmgt %s",
+                             isd, ver, meta, seg_meta.hmgt.union)
             with self.req_trcs_lock:
                 self.requested_trcs[(isd, ver)] = (time.time(), seg_meta.meta)
                 if self._labels:
@@ -488,12 +501,20 @@ class SCIONElement(object):
                     continue
             cert_req = CertChainRequest.from_values(isd_as, ver, cache_only=True)
             meta = seg_meta.meta or self._get_cs()
-            if not meta:
-                logging.error("Couldn't find a CS to request CERTCHAIN for PCB %s",
-                              seg_meta.seg.short_id())
+            if isinstance(seg_meta, PathSegMeta):
+                if not meta:
+                    logging.error("Couldn't find a CS to request CERTCHAIN for PCB %s",
+                                  seg_meta.seg.short_id())
+                    continue
+                logging.info("Requesting %sv%s CERTCHAIN from %s for PCB %s",
+                             isd_as, ver, meta, seg_meta.seg.short_id())
+            elif not meta:
+                logging.error("Couldn't find a CS to request CERTCHAIN for HPmgt %s",
+                              seg_meta.hmgt.union)
                 continue
-            logging.info("Requesting %sv%s CERTCHAIN from %s for PCB %s",
-                         isd_as, ver, meta, seg_meta.seg.short_id())
+            else:
+                logging.info("Requesting %sv%s CERTCHAIN from %s, for HPmgt %s",
+                             isd_as, ver, meta, seg_meta.hmgt.union)
             with self.req_certs_lock:
                 self.requested_certs[(isd_as, ver)] = (time.time(), seg_meta.meta)
                 if self._labels:

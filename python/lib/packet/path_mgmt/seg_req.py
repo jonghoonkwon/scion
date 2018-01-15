@@ -90,4 +90,5 @@ class PathSegmentReq(Cerealizable):  # pragma: no cover
         cfg_strs = []
         for cfg_id in self.iter_hp_cfg_ids():
             cfg_strs.append(cfg_id.short_desc)
-        return "%s HPCfgIds: %s" % (desc, ", ".join(cfg_strs))
+        # return "%s HPCfgIds: %s" % (desc, ", ".join(cfg_strs))
+        return desc

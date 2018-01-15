@@ -16,14 +16,17 @@ struct HPCfgRecs {
 }
 
 struct HPMgmt {
-    timestamp @0 :UInt64;
-    signature @1 :Data;
+    isdas @0 :UInt32;  # Local ISD-AS
+    trcVer @1 :UInt32;
+    certVer @2 :UInt32;
+    timestamp @3 :UInt64;
+    signature @4 :Data;
     union {
-        hpCfgReq @2 :HPCfgReq;
-        hpCfgReply @3 :HPCfgRecs;
-        hpCfgReg @4 :HPCfgRecs;
-        hpSegReq @5 :PathMgmt.SegReq;
-        hpSegReply @6 :PathMgmt.SegRecs;
-        hpSegReg @7 :PathMgmt.SegRecs;
+        hpCfgReq @5 :HPCfgReq;
+        hpCfgReply @6 :HPCfgRecs;
+        hpCfgReg @7 :HPCfgRecs;
+        hpSegReq @8 :PathMgmt.SegReq;
+        hpSegReply @9 :PathMgmt.SegRecs;
+        hpSegReg @10 :PathMgmt.SegRecs;
     }
 }

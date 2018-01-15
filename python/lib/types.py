@@ -144,6 +144,7 @@ class PathSegmentType(TypeBase):
     DOWN = 1  # Request/Reply for down-paths
     CORE = 2  # Request/Reply for core-paths
     GENERIC = 3  # FIXME(PSz): experimental for now.
+    HIDDEN = 4  # Request/Reply for hidden-paths
 
 
 class DRKeyMgmtType(TypeBase):

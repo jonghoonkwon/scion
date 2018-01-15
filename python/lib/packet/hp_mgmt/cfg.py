@@ -27,7 +27,7 @@ from lib.util import proto_len
 
 
 class HPCfgReq(Cerealizable):
-    NAME = "HPCfgReg"
+    NAME = "HPCfgReq"
     P_CLS = P.HPCfgReq
     VER = proto_len(P.HPCfgReq.schema) - 1
 
@@ -37,13 +37,13 @@ class HPCfgReq(Cerealizable):
         :param hp_cfg_ids: list of hidden path configs
         """
         p = cls.P_CLS.new_message()
-        p.init("hpCfgsIds", len(hp_cfg_ids))
+        p.init("hpCfgIds", len(hp_cfg_ids))
         for i, hp_cfg_id in enumerate(hp_cfg_ids):
             p.hpCfgIds[i] = hp_cfg_id.p
         return cls(p)
 
     def hp_cfg_id(self, idx):
-        return HPCfgId(self.p.hpCfgs[idx])
+        return HPCfgId(self.p.hpCfgIds[idx])
 
     def iter_hp_cfg_ids(self, start=0):
         for i in range(start, len(self.p.hpCfgIds)):

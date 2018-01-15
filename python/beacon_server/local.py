@@ -24,11 +24,14 @@ from beacon_server.base import BeaconServer
 from lib.defines import PATH_SERVICE, SIBRA_SERVICE
 from lib.errors import SCIONServiceLookupError
 from lib.packet.ctrl_pld import CtrlPayload
+from lib.packet.hp_mgmt.base import HPMgmt
+from lib.packet.hp_mgmt.seg import HPSegReg
 from lib.packet.path_mgmt.base import PathMgmt
 from lib.packet.path_mgmt.seg_recs import PathRecordsReg
 from lib.packet.svc import SVCType
 from lib.path_store import PathStore
 from lib.types import PathSegmentType as PST
+from lib.util import SCIONTime
 
 
 class LocalBeaconServer(BeaconServer):
@@ -51,6 +54,7 @@ class LocalBeaconServer(BeaconServer):
         self.beacons = PathStore(self.path_policy)
         self.up_segments = PathStore(self.path_policy)
         self.down_segments = PathStore(self.path_policy)
+        self.hidden_segments = PathStore(self.path_policy)
         self.cert_chain = self.trust_store.get_cert(self.addr.isd_as)
         assert self.cert_chain
 
@@ -78,12 +82,52 @@ class LocalBeaconServer(BeaconServer):
         self.send_meta(CtrlPayload(PathMgmt(records)), meta)
         return meta
 
+    def register_hidden_segment(self, pcb, hps_ia, hpcfg_id):
+        """
+        Send hidden-segment to Hidden Path Server
+        """
+        dst_ia = pcb.asm(0).isd_as()
+        records = HPSegReg.from_values({PST.HIDDEN: [pcb]}, hp_cfg_ids=[hpcfg_id])
+        ts = int(SCIONTime.get_time())
+        chain = self._get_my_cert()
+        isd_as, cert_ver = chain.get_leaf_isd_as_ver()
+        trc_ver = self._get_my_trc().version
+        hmgt = HPMgmt(records, isd_as, trc_ver, cert_ver, ts)
+        sig = hmgt.sign(self.signing_key)
+        if not sig:
+            logging.debug("Signing failed: %s" % hmgt)
+            return None
+        if hps_ia == self.addr.isd_as:
+            # HPS is in the same AS
+            try:
+                addr, port = self.dsn_query_topo(PATH_SERVICE)[0]
+            except SCIONServiceLookupError as e:
+                logging.warning("Lookup for hidden path service failed: %s", e)
+                return None
+            meta = self._build_meta(host=addr, port=port)
+        elif dst_ia == hps_ia:
+            # HPS is in its' core AS (Currently core ASes do not support hidden path)
+            core_path = pcb.get_path(reverse_direction=True)
+            meta = self._build_meta(ia=dst_ia, host=SVCType.PS_A, path=core_path, reuse=True)
+        else:
+            path = self._get_path_via_sciond(hps_ia)
+            if path:
+                meta = self._build_meta(ia=hps_ia, host=SVCType.PS_A, path=path.fwd_path())
+            else:
+                logging.warning("Hidden path register (for %s) not sent: "
+                                "no path found", hps_ia)
+                return None
+
+        self.send_meta(CtrlPayload(hmgt), meta)
+        return meta
+
     def register_segments(self):
         """
         Register paths according to the received beacons.
         """
         self.register_up_segments()
         self.register_down_segments()
+        self.register_hidden_segments()
 
     def _remove_revoked_pcbs(self, rev_info):
         with self._rev_seg_lock:
@@ -101,9 +145,12 @@ class LocalBeaconServer(BeaconServer):
         Once a beacon has been verified, place it into the right containers.
         """
         with self._rev_seg_lock:
-            self.beacons.add_segment(pcb)
             self.up_segments.add_segment(pcb)
-            self.down_segments.add_segment(pcb)
+            if pcb.p.ifID in self.hps_policy.if_ids:
+                self.hidden_segments.add_segment(pcb)
+            else:
+                self.beacons.add_segment(pcb)
+                self.down_segments.add_segment(pcb)
 
     def handle_pcbs_propagation(self):
         """
@@ -157,3 +204,26 @@ class LocalBeaconServer(BeaconServer):
             # Keep the ID of the not-terminated PCB to relate to previously received ones.
             registered_paths[(str(dst_ps), PATH_SERVICE)].append(pcb.short_id())
         self._log_registrations(registered_paths, "down")
+
+    def register_hidden_segments(self):
+        """
+        Register the hidden paths from the core.
+        """
+        with self._rev_seg_lock:
+            best_segments = self.hidden_segments.get_best_segments(sending=False)
+        registered_paths = defaultdict(list)
+        for pcb in best_segments:
+            new_pcb = self._terminate_pcb(pcb)
+            if not new_pcb:
+                continue
+            new_pcb.sign(self.signing_key)
+            hpcfg_ids = self.hpcfg_store.get_intf_conf(pcb.p.ifID)
+            for hpcfg_id in hpcfg_ids:
+                hpcfg = self.hpcfg_store.get_hpcfg(hpcfg_id.__hash__())
+                if not hpcfg:
+                    continue
+                for hps_ia in hpcfg.iter_hps_ias():
+                    dst_ps = self.register_hidden_segment(new_pcb, hps_ia, hpcfg_id)
+                    # Keep the ID of the not-terminated PCB to relate to previously received ones.
+                    registered_paths[(str(dst_ps), PATH_SERVICE)].append(pcb.short_id())
+        self._log_registrations(registered_paths, "hidden")

@@ -20,7 +20,6 @@ from abc import ABCMeta, abstractmethod
 
 # External
 import capnp
-
 # SCION
 from lib.errors import SCIONParseError, SCIONTypeError
 from lib.util import hex_str
@@ -134,7 +133,7 @@ class Cerealizable(object, metaclass=ABCMeta):
         return inst
 
     def __eq__(self, other):  # pragma: no cover
-        raise NotImplementedError
+        return self.p == other.p
 
     def short_desc(self):
         return str(self.proto())

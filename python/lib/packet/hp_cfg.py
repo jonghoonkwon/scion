@@ -43,6 +43,9 @@ class HPCfgId(Cerealizable):
     def master_ia(self):
         return ISD_AS(self.p.masterIA)
 
+    def cfg_id(self):
+        return self.p.cfgId
+
     def sig_pack(self):
         if self.VER != 1:
             raise SCIONSigVerError("HPCfgId.sig_pack cannot support version %s",
@@ -55,6 +58,9 @@ class HPCfgId(Cerealizable):
     def short_desc(self):
         return "%s | %d" % (self.master_ia(), self.p.cfgId)
 
+    def __hash__(self):  # pragma: no cover
+        return hash(str(self))
+
 
 class HPCfg(Cerealizable):  # pragma: no cover
     NAME = "HPCfg"
@@ -66,13 +72,13 @@ class HPCfg(Cerealizable):  # pragma: no cover
         p = cls.P_CLS.new_message(id=id.p, version=ver)
         p.init("hpsIAs", len(hps_ias))
         for i, hps_ia in enumerate(hps_ias):
-            p.hpIAs[i] = hps_ia.pack()
+            p.hpsIAs[i] = hps_ia.pack()
         p.init("writerIAs", len(writer_ias))
         for i, writer_ia in enumerate(writer_ias):
-            p.writeIAs[i] = writer_ia.pack()
+            p.writerIAs[i] = writer_ia.pack()
         p.init("readerIAs", len(reader_ias))
         for i, reader_ia in enumerate(reader_ias):
-            p.readIAs[i] = reader_ia.pack()
+            p.readerIAs[i] = reader_ia.pack()
 
         return cls(p)
 
@@ -83,24 +89,24 @@ class HPCfg(Cerealizable):  # pragma: no cover
         return HPCfgId(self.p.id)
 
     def hps_ia(self, idx):
-        return ISD_AS(self.p.hpIAs[idx])
+        return ISD_AS(self.p.hpsIAs[idx])
 
     def iter_hps_ias(self, start=0):
-        for i in range(start, len(self.p.hpIAs)):
+        for i in range(start, len(self.p.hpsIAs)):
             yield self.hps_ia(i)
 
     def writer_ia(self, idx):
-        return ISD_AS(self.p.writeIAs[idx])
+        return ISD_AS(self.p.writerIAs[idx])
 
     def iter_writer_ias(self, start=0):
-        for i in range(start, len(self.p.writeIAs)):
+        for i in range(start, len(self.p.writerIAs)):
             yield self.writer_ia(i)
 
     def reader_ia(self, idx):
-        return ISD_AS(self.p.readIAs[idx])
+        return ISD_AS(self.p.readerIAs[idx])
 
     def iter_reader_ias(self, start=0):
-        for i in range(start, len(self.p.readIAs)):
+        for i in range(start, len(self.p.readerIAs)):
             yield self.reader_ia(i)
 
     def sig_pack(self):
@@ -123,14 +129,17 @@ class HPCfg(Cerealizable):  # pragma: no cover
         d.append(self.id().short_desc())
         hps_ias = []
         for hps_ia in self.iter_hps_ias():
-            hps_ias.append(hps_ia)
+            hps_ias.append(str(hps_ia))
         d.append("   HPS %s" % ", ".join(hps_ias))
         writer_ias = []
         for writer_ia in self.iter_writer_ias():
-            writer_ias.append(writer_ia)
+            writer_ias.append(str(writer_ia))
         d.append("   Writer ASes %s" % ", ".join(writer_ias))
         reader_ias = []
         for reader_ia in self.iter_reader_ias():
-            reader_ias.append(reader_ia)
+            reader_ias.append(str(reader_ia))
         d.append("   Reader ASes %s" % ", ".join(reader_ias))
         return "\n".join(d)
+
+    def __hash__(self):  # pragma: no cover
+        return hash(str(self))

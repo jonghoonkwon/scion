@@ -48,6 +48,7 @@ from lib.errors import (
     SCIONPathPolicyViolated,
     SCIONServiceLookupError,
 )
+from lib.hpcfg_store import HPCfgStore
 from lib.msg_meta import UDPMetadata
 from lib.path_seg_meta import PathSegMeta
 from lib.packet.ctrl_pld import CtrlPayload
@@ -174,6 +175,7 @@ class BeaconServer(SCIONElement, metaclass=ABCMeta):
         self.local_rev_cache = ExpiringDict(1000, HASHTREE_EPOCH_TIME +
                                             HASHTREE_EPOCH_TOLERANCE)
         self._rev_seg_lock = RLock()
+        self.hpcfg_store = HPCfgStore(self.hps_policy)
 
     def _init_hash_tree(self):
         ifs = list(self.ifid2br.keys())

@@ -159,6 +159,30 @@ class CorePathServer(PathServer):
             ret.add((first_ia.any_as(), pcb.is_sibra()))
         return ret
 
+    def _handle_hidden_segment_record(self, pcb, from_zk=None):
+        logging.error("Core Path Server received hidden-segment record!")
+        return set()
+
+    def handle_hpcfg_request(self, cpld, meta):
+        logging.error("Core Path Server does not support hidden path yet! err:1")
+        pass
+
+    def handle_hpcfg_record(self, cpld, meta):
+        logging.error("Core Path Server does not support hidden path yet! err:2")
+        pass
+
+    def handle_hpath_segment_request(self, cpld, meta):
+        logging.error("Core Path Server does not support hidden path yet! err:3")
+        pass
+
+    def handle_hpath_segment_record(self, cpld, meta):
+        logging.error("Core Path Server does not support hidden path yet! err:4")
+        pass
+
+    def handle_hpcfg_propagation(self):
+        logging.error("Core Path Server does not support hidden path yet! err:5")
+        pass
+
     def _dispatch_params(self, pld, meta):
         params = {}
         if meta.ia == self.addr.isd_as and isinstance(pld, PathRecordsReply):

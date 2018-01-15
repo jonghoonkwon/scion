@@ -18,7 +18,6 @@
 # Stdlib
 import copy
 import struct
-
 # SCION
 from lib.defines import LINE_LEN, MAX_HOPBYHOP_EXT, SCION_PROTO_VERSION
 from lib.errors import SCIONIndexError, SCIONParseError
