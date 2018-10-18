@@ -1,53 +1,24 @@
 version: 2
 
+workflows:
+    version: 2
+    scion_build_test:
+        jobs:
+            - build
+
 jobs:
-    local:
-        docker:
-            - image: scion:latest
-        <<: *job
-
-        steps:
-            - run: *env_setup
-            # The checkout & build prep steps from the `build` job aren't
-            # needed here, as the `scion` docker image has already done the work
-            # for us.
-
-            # Common:
-            - run:
-                name: Build
-                command: make -s |& tee logs/make.run
-                when: always
-            - run:
-                name: Lint
-                command: ./scion.sh lint |& tee logs/lint.run
-                when: always
-            - run:
-                name: Unit tests & Coverage
-                command: '{ ./scion.sh coverage py; make -sC go test; } |& tee logs/coverage.run'
-                when: always
-            - run:
-                name: Python documentation (sphinx)
-                command: make -f sphinx-doc/Makefile clean html |& tee logs/sphinx.run
-                when: always
-            - run:
-                name: Integration tests
-                command: ./integration/integration_test.sh |& tee logs/integration.run
-                when: always
-            - run: *artifacts
-
-            - run:
-                name: Export artifacts
-                command: mv /tmp/artifacts.out/* /tmp/artifacts/
-                when: always
-
-
     build:
         docker:
             - image: scionproto/scion_base@sha256:975646f75df9db5a0dd882a4bc6bac36dd63201e0aff920f7ee711053b1ca48e
-        <<: *job
+        working_directory: /home/scion/go/src/github.com/scionproto/scion
+        environment:
+            - BASH_ENV: /home/scion/.profile
         steps:
             - checkout
-            - run: *env_setup
+            - run:
+                name: Environment setup
+                command: ./tools/ci/env_setup |& tee logs/env_setup.run
+                when: always
             - run:
                 name: Build prep
                 command: ./tools/ci/build_prep |& tee logs/build_prep.run
@@ -74,32 +45,19 @@ jobs:
                 name: Integration tests
                 command: ./integration/integration_test.sh |& tee logs/integration.run
                 when: always
-            - run: *artifacts
+            - run:
+                name: Gather test artifacts
+                command: |
+                    set +e -x
+                    mv -n python/htmlcov logs gen sphinx-doc/_build/html/ "/tmp/artifacts/$ARTIFACTS"
+                    cp -a /tmp/test_flags "/tmp/artifacts/$ARTIFACTS"
+                    tar caf "/tmp/artifacts.out/$ARTIFACTS.tar.gz" -C /tmp/artifacts "$ARTIFACTS" || exit 1
+                when: always
 
             - store_artifacts:
                 path: /tmp/artifacts.out
                 destination: /
             - store_test_results:
                 path: logs/nosetests.xml
-
-scion_defaults:
-    job: &job
-        working_directory: /home/scion/go/src/github.com/scionproto/scion
-        environment:
-            - BASH_ENV: /home/scion/.profile
-
-    env_setup: &env_setup
-        name: Environment setup
-        command: ./tools/ci/env_setup |& tee logs/env_setup.run
-        when: always
-
-    artifacts: &artifacts
-        name: Gather test artifacts
-        command: |
-            set +e -x
-            mv -n python/htmlcov logs gen sphinx-doc/_build/html/ "/tmp/artifacts/$ARTIFACTS"
-            cp -a /tmp/test_flags "/tmp/artifacts/$ARTIFACTS"
-            tar caf "/tmp/artifacts.out/$ARTIFACTS.tar.gz" -C /tmp/artifacts "$ARTIFACTS" || exit 1
-        when: always
 
 # vim: expandtab:sw=4:sts=4
