@@ -133,7 +133,7 @@ PATH_FLAG_SIBRA = "SIBRA"
 MAX_HOST_ADDR_LEN = 16
 
 # Minimum revocation TTL in seconds
-MIN_REVOCATION_TTL = 10
+MIN_REVOCATION_TTL = 20
 
 # TCP polling timeouts, used by accept() and recv().
 TCP_ACCEPT_POLLING_TOUT = 1.0
