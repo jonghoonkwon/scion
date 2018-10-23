@@ -465,6 +465,9 @@ class PathStore(object):
         for candidate in self.candidates:
             if candidate.expiration_time <= now:
                 rec_ids.append(candidate.id)
+            delay_upperbound = self.path_policy.property_ranges["DelayTime"][1]
+            if int(now - candidate.pcb.get_timestamp()) >= delay_upperbound:
+                rec_ids.append(candidate.id)
         self.remove_segments(rec_ids)
 
     def remove_segments(self, rec_ids):
