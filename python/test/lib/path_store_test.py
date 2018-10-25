@@ -502,18 +502,22 @@ class TestPathStoreRemoveExpiredSegments(object):
     @patch("lib.path_store.SCIONTime.get_time", spec_set=[],
            new_callable=MagicMock)
     def test_basic(self, time_):
-        path_policy = MagicMock(spec_set=['history_limit'])
+        path_policy = MagicMock(spec_set=['history_limit', 'property_ranges'])
         path_policy.history_limit = 3
+        path_policy.property_ranges = {"DelayTime": [-10, 70]}
         pth_str = PathStore(path_policy)
-        pth_str.candidates = [MagicMock(spec_set=['expiration_time', 'id'])
+        pth_str.candidates = [MagicMock(spec_set=['expiration_time', 'id', 'pcb'])
                               for i in range(5)]
         for i in range(5):
             pth_str.candidates[i].expiration_time = i
             pth_str.candidates[i].id = i
+            pth_str.candidates[i].pcb = create_mock(["get_timestamp"])
+            pth_str.candidates[i].pcb.get_timestamp.return_value = 1
         time_.return_value = 2
+        pth_str.candidates[4].pcb.get_timestamp.return_value = -1000
         pth_str.remove_segments = MagicMock(spec_set=[])
         pth_str._remove_expired_segments()
-        pth_str.remove_segments.assert_called_once_with([0, 1, 2])
+        pth_str.remove_segments.assert_called_once_with([0, 1, 2, 4])
 
 
 class TestPathStoreRemoveSegments(object):
